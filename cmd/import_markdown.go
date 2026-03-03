@@ -563,7 +563,16 @@ func phase1CreateBlocks(
 					if idx < len(result.BlockNodes) {
 						node := result.BlockNodes[idx]
 						if node.Block.BlockType != nil && *node.Block.BlockType == int(converter.BlockTypeCallout) {
-							_ = client.DeleteBlocks(documentID, parentID, 0, 1)
+							delResult := client.DoWithRetry(func() (struct{}, http.Header, error) {
+								err := client.DeleteBlocks(documentID, parentID, 0, 1)
+								return struct{}{}, nil, err
+							}, client.RetryConfig{
+								MaxRetries:       5,
+								RetryOnRateLimit: true,
+							})
+							if delResult.Err != nil && verbose {
+								syncPrintf("  ⚠ Callout 空子块删除失败 (parent=%s): %v\n", parentID, delResult.Err)
+							}
 						}
 					}
 					if nestedErr != nil {
