@@ -183,6 +183,38 @@ export FEISHU_APP_SECRET="xxx"
 feishu-cli config init
 ```
 
+### 自动授权（可选，默认关闭）
+
+`doc create` 和 `doc import` 支持在创建新文档后自动授予成员权限，默认是关闭的。
+
+**环境变量（推荐）**:
+
+```bash
+# 开关：创建后是否自动授予
+export FEISHU_PERMISSION_AUTO_GRANT=true
+
+# 授权目标
+export FEISHU_PERMISSION_MEMBER_TYPE=email
+export FEISHU_PERMISSION_MEMBER_ID=user@example.com
+
+# 权限级别：view / edit / full_access
+export FEISHU_PERMISSION_PERM=full_access
+
+# 是否发送授权通知
+export FEISHU_PERMISSION_NOTIFICATION=false
+```
+
+**配置文件示例**（`~/.feishu-cli/config.yaml`）:
+
+```yaml
+permission:
+  auto_grant: true
+  member_type: email
+  member_id: user@example.com
+  perm: full_access
+  notification: false
+```
+
 ### 验证安装
 
 ```bash
