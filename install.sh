@@ -144,7 +144,7 @@ download_from_candidates() {
 
 # 下载并安装
 install() {
-    local os arch version install_dir tmpdir asset_name download_file binary_path target_name
+    local os arch version install_dir asset_name download_file binary_path target_name installed_name
     local repo_url
 
     os=$(detect_os)
@@ -170,7 +170,7 @@ install() {
 
     # 创建临时目录
     tmpdir=$(mktemp -d)
-    trap 'rm -rf "$tmpdir"' EXIT
+    trap 'rm -rf "${tmpdir-}"' EXIT
 
     asset_name=$(download_from_candidates "$tmpdir" "$version" "$os" "$arch")
     download_file="${tmpdir}/${asset_name}"
