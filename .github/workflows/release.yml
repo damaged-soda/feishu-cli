@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build binaries
+        run: make build-all
+
+      - name: Package release assets
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          rm -rf dist/*
+
+          make_asset() {
+            local bin_file="$1"
+            local platform_dir="$2"
+            local output_name="$3"
+
+            local stage_dir="dist/.stage/${platform_dir}"
+            mkdir -p "${stage_dir}"
+            cp "${bin_file}" "${stage_dir}/${output_name}"
+            chmod +x "${stage_dir}/${output_name}" || true
+            tar -czf "dist/feishu-cli_${VERSION}_${platform_dir}.tar.gz" -C "dist/.stage" "${platform_dir}"
+            rm -rf "${stage_dir}"
+          }
+
+          make_asset "bin/feishu-cli-linux-amd64" "linux-amd64" "feishu-cli"
+          make_asset "bin/feishu-cli-linux-arm64" "linux-arm64" "feishu-cli"
+          make_asset "bin/feishu-cli-darwin-amd64" "darwin-amd64" "feishu-cli"
+          make_asset "bin/feishu-cli-darwin-arm64" "darwin-arm64" "feishu-cli"
+          make_asset "bin/feishu-cli-windows-amd64.exe" "windows_amd64" "feishu-cli.exe"
+
+          rm -rf dist/.stage
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/feishu-cli_${{ github.ref_name }}_*.tar.gz
+          generate_release_notes: true
