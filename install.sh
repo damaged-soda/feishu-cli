@@ -11,8 +11,8 @@ DEFAULT_INSTALL_DIR="${FEISHU_INSTALL_DIR:-/usr/local/bin}"
 DEFAULT_INSTALL_VERSION="${FEISHU_VERSION:-}"
 
 # 颜色输出
-info()  { printf "\033[34m[INFO]\033[0m  %s\n" "$*"; }
-ok()    { printf "\033[32m[OK]\033[0m    %s\n" "$*"; }
+info()  { printf "\033[34m[INFO]\033[0m  %s\n" "$*" >&2; }
+ok()    { printf "\033[32m[OK]\033[0m    %s\n" "$*" >&2; }
 err()   { printf "\033[31m[ERROR]\033[0m %s\n" "$*" >&2; }
 
 # 检测操作系统
