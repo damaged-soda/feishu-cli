@@ -351,6 +351,9 @@ var importMarkdownCmd = &cobra.Command{
 			documentID = *doc.DocumentId
 			fmt.Printf("已创建文档: %s\n", documentID)
 			fmt.Printf("链接: https://feishu.cn/docx/%s\n\n", documentID)
+			if err := applyAutoPermissionIfEnabled(documentID, "docx"); err != nil {
+				return fmt.Errorf("创建文档后自动授权失败: %w", err)
+			}
 		}
 
 		// 解析 Markdown 为片段

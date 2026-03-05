@@ -10,13 +10,14 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	AppID           string       `mapstructure:"app_id"`
-	AppSecret       string       `mapstructure:"app_secret"`
-	UserAccessToken string       `mapstructure:"user_access_token"`
-	BaseURL         string       `mapstructure:"base_url"`
-	Debug           bool         `mapstructure:"debug"`
-	Export          ExportConfig `mapstructure:"export"`
-	Import          ImportConfig `mapstructure:"import"`
+	AppID           string           `mapstructure:"app_id"`
+	AppSecret       string           `mapstructure:"app_secret"`
+	UserAccessToken string           `mapstructure:"user_access_token"`
+	BaseURL         string           `mapstructure:"base_url"`
+	Debug           bool             `mapstructure:"debug"`
+	Export          ExportConfig     `mapstructure:"export"`
+	Import          ImportConfig     `mapstructure:"import"`
+	Permission      PermissionConfig `mapstructure:"permission"`
 }
 
 // ExportConfig holds export-related configuration
@@ -28,6 +29,14 @@ type ExportConfig struct {
 // ImportConfig holds import-related configuration
 type ImportConfig struct {
 	UploadImages bool `mapstructure:"upload_images"`
+}
+
+type PermissionConfig struct {
+	AutoGrant    bool   `mapstructure:"auto_grant"`
+	MemberType   string `mapstructure:"member_type"`
+	MemberID     string `mapstructure:"member_id"`
+	Perm         string `mapstructure:"perm"`
+	Notification bool   `mapstructure:"notification"`
 }
 
 var cfg *Config
@@ -57,6 +66,11 @@ func Init(cfgFile string) error {
 	viper.SetDefault("export.download_images", false)
 	viper.SetDefault("export.assets_dir", "./assets")
 	viper.SetDefault("import.upload_images", true)
+	viper.SetDefault("permission.auto_grant", false)
+	viper.SetDefault("permission.member_type", "email")
+	viper.SetDefault("permission.member_id", "")
+	viper.SetDefault("permission.perm", "full_access")
+	viper.SetDefault("permission.notification", false)
 
 	// 3. 环境变量支持（优先级最高）
 	viper.SetEnvPrefix("FEISHU")
@@ -68,6 +82,11 @@ func Init(cfgFile string) error {
 	_ = viper.BindEnv("user_access_token", "FEISHU_USER_ACCESS_TOKEN")
 	_ = viper.BindEnv("base_url", "FEISHU_BASE_URL")
 	_ = viper.BindEnv("debug", "FEISHU_DEBUG")
+	_ = viper.BindEnv("permission.auto_grant", "FEISHU_PERMISSION_AUTO_GRANT")
+	_ = viper.BindEnv("permission.member_type", "FEISHU_PERMISSION_MEMBER_TYPE")
+	_ = viper.BindEnv("permission.member_id", "FEISHU_PERMISSION_MEMBER_ID")
+	_ = viper.BindEnv("permission.perm", "FEISHU_PERMISSION_PERM")
+	_ = viper.BindEnv("permission.notification", "FEISHU_PERMISSION_NOTIFICATION")
 
 	// 4. 读取配置文件
 	if err := viper.ReadInConfig(); err != nil {
@@ -154,6 +173,14 @@ export:
 # 导入配置
 import:
   upload_images: true      # 导入时上传本地图片
+
+# 自动授权配置（用于文档创建后自动赋权）
+permission:
+  auto_grant: false
+  member_type: email
+  member_id: ""
+  perm: full_access
+  notification: false
 `
 
 	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {

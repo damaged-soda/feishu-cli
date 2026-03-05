@@ -20,12 +20,15 @@ var initConfigCmd = &cobra.Command{
   2. 获取 App ID 和 App Secret
   3. 编辑配置文件填入凭证
 
-也可以使用环境变量（优先级更高）:
-  export FEISHU_APP_ID="cli_xxx"
-  export FEISHU_APP_SECRET="xxx"
+	也可以使用环境变量（优先级更高）:
+	  export FEISHU_APP_ID="cli_xxx"
+	  export FEISHU_APP_SECRET="xxx"
+	  export FEISHU_PERMISSION_AUTO_GRANT=true
+	  export FEISHU_PERMISSION_MEMBER_TYPE="email"
+	  export FEISHU_PERMISSION_MEMBER_ID="user@example.com"
 
-示例:
-  feishu-cli config init`,
+	示例:
+	  feishu-cli config init`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.CreateDefaultConfig(); err != nil {
 			return err

@@ -53,6 +53,10 @@ var createDocumentCmd = &cobra.Command{
 			revisionID = *doc.RevisionId
 		}
 
+		if err := applyAutoPermissionIfEnabled(documentID, "docx"); err != nil {
+			return fmt.Errorf("创建文档后自动授权失败: %w", err)
+		}
+
 		output, _ := cmd.Flags().GetString("output")
 		if output == "json" {
 			if err := printJSON(map[string]any{
@@ -69,7 +73,6 @@ var createDocumentCmd = &cobra.Command{
 			fmt.Printf("  版本: %d\n", revisionID)
 			fmt.Printf("  链接: https://feishu.cn/docx/%s\n", documentID)
 		}
-
 		return nil
 	},
 }

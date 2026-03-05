@@ -21,17 +21,6 @@ allowed-tools: Bash, Write, Read
 feishu-cli doc create --title "文档标题" --output json
 ```
 
-创建后**必须立即**：
-1. 授予 `full_access` 权限：
-   ```bash
-   feishu-cli perm add <document_id> --doc-type docx --member-type email --member-id user@example.com --perm full_access --notification
-   ```
-2. 转移文档所有权：
-   ```bash
-   feishu-cli perm transfer-owner <document_id> --doc-type docx --member-type email --member-id user@example.com --notification
-   ```
-3. 发送飞书消息通知用户文档已创建
-
 ## 核心概念
 
 **Markdown 作为中间态**：本地文档与飞书云文档之间通过 Markdown 格式进行转换，中间文件存储在 `/tmp` 目录中。
@@ -63,12 +52,7 @@ feishu-cli doc create --title "文档标题" --output json
    feishu-cli doc import /tmp/feishu_write_<timestamp>.md --title "文档标题"
    ```
 
-4. **添加权限**（可选，给指定用户添加 full_access）
-   ```bash
-   feishu-cli perm add <document_id> --doc-type docx --member-type email --member-id user@example.com --perm full_access
-   ```
-
-5. **通知用户**
+4. **通知用户**
    - 提供文档链接
    - 发送飞书消息通知
 
