@@ -14,6 +14,7 @@ var docCmd = &cobra.Command{
   get         获取文档信息
   blocks      获取文档所有块
   add         向文档添加内容
+  replace     用 Markdown 替换父块下的全部子块
   update      更新块内容
   delete      删除块
   export      导出文档为 Markdown

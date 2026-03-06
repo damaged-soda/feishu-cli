@@ -256,8 +256,8 @@ type importStats struct {
 
 var importMarkdownCmd = &cobra.Command{
 	Use:   "import <file.md>",
-	Short: "从 Markdown 导入创建/更新文档",
-	Long: `从 Markdown 文件导入内容，创建新的飞书文档或更新已有文档。
+	Short: "从 Markdown 导入创建文档或向已有文档追加内容",
+	Long: `从 Markdown 文件导入内容，创建新的飞书文档或向已有文档追加导入内容。
 
 特性:
   - 三阶段流水线: 顺序创建 → 并发处理 → 降级容错
@@ -313,20 +313,6 @@ var importMarkdownCmd = &cobra.Command{
 		basePath := filepath.Dir(filePath)
 		markdownText := string(content)
 
-		// 统计图表数量
-		mermaidCount, plantumlCount := countDiagramBlocks(markdownText)
-		diagramCount := mermaidCount + plantumlCount
-		if verbose && diagramCount > 0 {
-			var parts []string
-			if mermaidCount > 0 {
-				parts = append(parts, fmt.Sprintf("%d 个 Mermaid", mermaidCount))
-			}
-			if plantumlCount > 0 {
-				parts = append(parts, fmt.Sprintf("%d 个 PlantUML", plantumlCount))
-			}
-			fmt.Printf("[信息] 检测到 %s 图表\n", strings.Join(parts, ", "))
-		}
-
 		// If no document ID, create new document
 		if documentID == "" {
 			if title == "" {
@@ -356,62 +342,9 @@ var importMarkdownCmd = &cobra.Command{
 			}
 		}
 
-		// 解析 Markdown 为片段
-		segments := parseMarkdownSegments(markdownText)
-
-		stats := &importStats{
-			diagramTotal:  diagramCount,
-			mermaidCount:  mermaidCount,
-			plantumlCount: plantumlCount,
-		}
-
-		// === 阶段 1/3: 顺序创建文档块 ===
-		fmt.Println("=== 阶段 1/3: 创建文档块 ===")
-		phase1Start := time.Now()
-
-		dTasks, tTasks, err := phase1CreateBlocks(documentID, segments, uploadImages, basePath, stats, verbose)
+		stats, err := importMarkdownIntoParent(documentID, documentID, markdownText, basePath, uploadImages, verbose, diagramWorkers, tableWorkers, diagramRetries)
 		if err != nil {
 			return err
-		}
-
-		stats.phase1Duration = time.Since(phase1Start)
-		stats.tableTotal = len(tTasks)
-		fmt.Printf("[阶段1] 完成 (%.1fs), 块: %d, 待填表格: %d, 待导入图表: %d\n\n",
-			stats.phase1Duration.Seconds(), stats.totalBlocks, len(tTasks), len(dTasks))
-
-		// === 阶段 2/3: 并发处理 ===
-		if len(dTasks) > 0 || len(tTasks) > 0 {
-			// 阶段 1 大量 API 调用后等待配额恢复，避免阶段 2 立即触发频率限制
-			if stats.totalBlocks > 30 {
-				cooldown := 5 * time.Second
-				if verbose {
-					fmt.Printf("等待 API 配额恢复 (%.0fs)...\n", cooldown.Seconds())
-				}
-				time.Sleep(cooldown)
-			}
-			fmt.Printf("=== 阶段 2/3: 并发处理 (图表×%d, 表格×%d) ===\n", diagramWorkers, tableWorkers)
-			phase2Start := time.Now()
-
-			failedDiagrams := phase2ConcurrentProcess(documentID, dTasks, tTasks, diagramWorkers, tableWorkers, diagramRetries, stats, verbose)
-
-			stats.phase2Duration = time.Since(phase2Start)
-			fmt.Printf("[阶段2] 完成 (%.1fs), 图表: %d/%d, 表格: %d/%d\n\n",
-				stats.phase2Duration.Seconds(),
-				stats.diagramSuccess, stats.diagramTotal,
-				stats.tableSuccess, stats.tableTotal)
-
-			// === 阶段 3/3: 降级处理 ===
-			if len(failedDiagrams) > 0 {
-				fmt.Printf("=== 阶段 3/3: 降级处理 (%d 个) ===\n", len(failedDiagrams))
-				phase3Start := time.Now()
-
-				phase3HandleFallbacks(documentID, failedDiagrams, stats, verbose)
-
-				stats.phase3Duration = time.Since(phase3Start)
-				fmt.Printf("[阶段3] 完成 (%.1fs), 降级成功: %d/%d\n\n",
-					stats.phase3Duration.Seconds(),
-					stats.fallbackSuccess, stats.fallbackSuccess+stats.fallbackFailed)
-			}
 		}
 
 		// === 输出结果 ===
@@ -472,6 +405,7 @@ var importMarkdownCmd = &cobra.Command{
 // phase1CreateBlocks 顺序创建所有文档块，收集待处理的图表和表格任务
 func phase1CreateBlocks(
 	documentID string,
+	parentBlockID string,
 	segments []segment,
 	uploadImages bool,
 	basePath string,
@@ -536,7 +470,7 @@ func phase1CreateBlocks(
 				batch := topLevelBlocks[i:end]
 
 				createResult := client.DoWithRetry(func() ([]*larkdocx.Block, http.Header, error) {
-					blocks, err := client.CreateBlock(documentID, documentID, batch, -1)
+					blocks, err := client.CreateBlock(documentID, parentBlockID, batch, -1)
 					return blocks, nil, err
 				}, client.RetryConfig{
 					MaxRetries:       5,
@@ -656,7 +590,7 @@ func phase1CreateBlocks(
 				},
 			}
 
-			createdBlocks, err := client.CreateBlock(documentID, documentID, equationBlocks, -1)
+			createdBlocks, err := client.CreateBlock(documentID, parentBlockID, equationBlocks, -1)
 			if err != nil {
 				if verbose {
 					fmt.Printf("  ⚠ 公式块创建失败: %v\n", err)
@@ -677,7 +611,7 @@ func phase1CreateBlocks(
 			}
 
 			// 只创建画板占位块，不导入图表
-			boardResult, err := client.AddBoard(documentID, "", -1)
+			boardResult, err := client.AddBoard(documentID, parentBlockID, -1)
 			if err != nil {
 				fmt.Printf("  ✗ %s %d 创建画板失败: %v\n", syntaxLabel, diagramIdx, err)
 				stats.diagramFailed++
@@ -707,6 +641,89 @@ func phase1CreateBlocks(
 	}
 
 	return dTasks, tTasks, nil
+}
+
+func importMarkdownIntoParent(
+	documentID string,
+	parentBlockID string,
+	markdownText string,
+	basePath string,
+	uploadImages bool,
+	verbose bool,
+	diagramWorkers int,
+	tableWorkers int,
+	diagramRetries int,
+) (*importStats, error) {
+	if parentBlockID == "" {
+		parentBlockID = documentID
+	}
+
+	mermaidCount, plantumlCount := countDiagramBlocks(markdownText)
+	diagramCount := mermaidCount + plantumlCount
+	if verbose && diagramCount > 0 {
+		var parts []string
+		if mermaidCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d 个 Mermaid", mermaidCount))
+		}
+		if plantumlCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d 个 PlantUML", plantumlCount))
+		}
+		fmt.Printf("[信息] 检测到 %s 图表\n", strings.Join(parts, ", "))
+	}
+
+	segments := parseMarkdownSegments(markdownText)
+	stats := &importStats{
+		diagramTotal:  diagramCount,
+		mermaidCount:  mermaidCount,
+		plantumlCount: plantumlCount,
+	}
+
+	fmt.Println("=== 阶段 1/3: 创建文档块 ===")
+	phase1Start := time.Now()
+
+	dTasks, tTasks, err := phase1CreateBlocks(documentID, parentBlockID, segments, uploadImages, basePath, stats, verbose)
+	if err != nil {
+		return nil, err
+	}
+
+	stats.phase1Duration = time.Since(phase1Start)
+	stats.tableTotal = len(tTasks)
+	fmt.Printf("[阶段1] 完成 (%.1fs), 块: %d, 待填表格: %d, 待导入图表: %d\n\n",
+		stats.phase1Duration.Seconds(), stats.totalBlocks, len(tTasks), len(dTasks))
+
+	if len(dTasks) > 0 || len(tTasks) > 0 {
+		if stats.totalBlocks > 30 {
+			cooldown := 5 * time.Second
+			if verbose {
+				fmt.Printf("等待 API 配额恢复 (%.0fs)...\n", cooldown.Seconds())
+			}
+			time.Sleep(cooldown)
+		}
+		fmt.Printf("=== 阶段 2/3: 并发处理 (图表×%d, 表格×%d) ===\n", diagramWorkers, tableWorkers)
+		phase2Start := time.Now()
+
+		failedDiagrams := phase2ConcurrentProcess(documentID, dTasks, tTasks, diagramWorkers, tableWorkers, diagramRetries, stats, verbose)
+
+		stats.phase2Duration = time.Since(phase2Start)
+		fmt.Printf("[阶段2] 完成 (%.1fs), 图表: %d/%d, 表格: %d/%d\n\n",
+			stats.phase2Duration.Seconds(),
+			stats.diagramSuccess, stats.diagramTotal,
+			stats.tableSuccess, stats.tableTotal)
+
+		if len(failedDiagrams) > 0 {
+			fmt.Printf("=== 阶段 3/3: 降级处理 (%d 个) ===\n", len(failedDiagrams))
+			phase3Start := time.Now()
+
+			phase3HandleFallbacks(documentID, parentBlockID, failedDiagrams, stats, verbose)
+
+			stats.phase3Duration = time.Since(phase3Start)
+			fmt.Printf("[阶段3] 完成 (%.1fs), 降级成功: %d/%d\n\n",
+				stats.phase3Duration.Seconds(),
+				stats.fallbackSuccess, stats.fallbackSuccess+stats.fallbackFailed)
+		}
+	}
+
+	return stats, nil
 }
 
 // phase2ConcurrentProcess 并发处理图表导入和表格填充
@@ -930,12 +947,13 @@ func createNestedChildren(documentID string, parentBlockID string, children []*c
 // phase3HandleFallbacks 处理失败的图表，降级为代码块
 func phase3HandleFallbacks(
 	documentID string,
+	parentBlockID string,
 	failedDiagrams []diagramResult,
 	stats *importStats,
 	verbose bool,
 ) {
 	// 获取文档顶层子块列表
-	children, err := client.GetAllBlockChildren(documentID, documentID)
+	children, err := client.GetAllBlockChildren(documentID, parentBlockID)
 	if err != nil {
 		fmt.Printf("  ✗ 获取文档子块失败，无法降级: %v\n", err)
 		stats.fallbackFailed += len(failedDiagrams)
@@ -979,7 +997,7 @@ func phase3HandleFallbacks(
 		}
 
 		// 1. 删除空画板块
-		err := client.DeleteBlocks(documentID, documentID, item.index, item.index+1)
+		err := client.DeleteBlocks(documentID, parentBlockID, item.index, item.index+1)
 		if err != nil {
 			fmt.Printf("  ✗ %s %d 删除画板失败: %v\n", syntaxLabel, item.result.task.index, err)
 			stats.fallbackFailed++
@@ -988,7 +1006,7 @@ func phase3HandleFallbacks(
 
 		// 2. 在同位置插入代码块
 		codeBlock := createDiagramCodeBlock(item.result.task.syntax, item.result.task.content)
-		_, err = client.CreateBlock(documentID, documentID, []*larkdocx.Block{codeBlock}, item.index)
+		_, err = client.CreateBlock(documentID, parentBlockID, []*larkdocx.Block{codeBlock}, item.index)
 		if err != nil {
 			fmt.Printf("  ✗ %s %d 插入代码块失败: %v\n", syntaxLabel, item.result.task.index, err)
 			stats.fallbackFailed++
@@ -1029,7 +1047,7 @@ func createDiagramCodeBlock(syntax, content string) *larkdocx.Block {
 func init() {
 	docCmd.AddCommand(importMarkdownCmd)
 	importMarkdownCmd.Flags().StringP("title", "t", "", "文档标题 (用于新建文档)")
-	importMarkdownCmd.Flags().StringP("document-id", "d", "", "已有文档ID (用于更新)")
+	importMarkdownCmd.Flags().StringP("document-id", "d", "", "已有文档ID (用于追加导入)")
 	importMarkdownCmd.Flags().Bool("upload-images", true, "上传本地图片")
 	importMarkdownCmd.Flags().StringP("folder", "f", "", "新文档的文件夹 Token")
 	importMarkdownCmd.Flags().StringP("output", "o", "", "输出格式 (json)")
