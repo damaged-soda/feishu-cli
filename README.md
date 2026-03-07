@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/riba2534/feishu-cli/releases"><img src="https://img.shields.io/github/v/release/riba2534/feishu-cli?style=for-the-badge&color=00ADD8" alt="Release" /></a>
+  <a href="https://github.com/damaged-soda/feishu-cli/releases"><img src="https://img.shields.io/github/v/release/damaged-soda/feishu-cli?style=for-the-badge&color=00ADD8" alt="Release" /></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Go" /></a>
-  <a href="https://github.com/riba2534/feishu-cli/stargazers"><img src="https://img.shields.io/github/stars/riba2534/feishu-cli?style=for-the-badge&color=f5a623" alt="Stars" /></a>
-  <a href="https://github.com/riba2534/feishu-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-teal.svg?style=for-the-badge" alt="License" /></a>
+  <a href="https://github.com/damaged-soda/feishu-cli/stargazers"><img src="https://img.shields.io/github/stars/damaged-soda/feishu-cli?style=for-the-badge&color=f5a623" alt="Stars" /></a>
+  <a href="https://github.com/damaged-soda/feishu-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-teal.svg?style=for-the-badge" alt="License" /></a>
 </p>
 
 <p align="center">
@@ -136,8 +136,10 @@ feishu-cli doc import large-doc.md --title "大文档" \
 自动检测平台，下载最新版本并安装到 `/usr/local/bin`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/riba2534/feishu-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/damaged-soda/feishu-cli/main/install.sh | FEISHU_REPO=damaged-soda/feishu-cli bash
 ```
+
+这里显式设置 `FEISHU_REPO=damaged-soda/feishu-cli`，确保安装脚本下载的是当前 fork 的 Release。
 
 已安装的用户执行同样的命令即可更新到最新版本。
 
@@ -146,7 +148,7 @@ curl -fsSL https://raw.githubusercontent.com/riba2534/feishu-cli/main/install.sh
 
 **手动下载**
 
-从 [Releases](https://github.com/riba2534/feishu-cli/releases/latest) 页面下载对应平台的压缩包：
+从 [Releases](https://github.com/damaged-soda/feishu-cli/releases/latest) 页面下载对应平台的压缩包：
 
 | 平台 | 文件 |
 |------|------|
@@ -163,14 +165,15 @@ sudo mv feishu-cli_*/feishu-cli /usr/local/bin/
 
 **使用 go install**
 
-```bash
-go install github.com/riba2534/feishu-cli@latest
-```
+当前 fork 暂不建议直接使用 `go install` 安装。
+当前仓库的 `go.mod` 仍是 `github.com/riba2534/feishu-cli`。如果直接执行
+`go install github.com/damaged-soda/feishu-cli@latest`，会因为 module path 不一致而失败。
+建议优先使用上方安装脚本，或使用下方源码编译方式。
 
 **从源码编译**
 
 ```bash
-git clone https://github.com/riba2534/feishu-cli.git
+git clone https://github.com/damaged-soda/feishu-cli.git
 cd feishu-cli && make build
 # 二进制文件输出到 bin/feishu-cli
 ```
@@ -628,7 +631,7 @@ feishu-cli/
 
 ```bash
 # 克隆项目
-git clone https://github.com/riba2534/feishu-cli.git
+git clone https://github.com/damaged-soda/feishu-cli.git
 cd feishu-cli
 
 # 安装依赖
@@ -659,11 +662,11 @@ go vet ./...
 
 ## Star History
 
-<a href="https://star-history.com/#riba2534/feishu-cli&Date">
+<a href="https://star-history.com/#damaged-soda/feishu-cli&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=riba2534/feishu-cli&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=riba2534/feishu-cli&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=riba2534/feishu-cli&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=damaged-soda/feishu-cli&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=damaged-soda/feishu-cli&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=damaged-soda/feishu-cli&type=Date" />
  </picture>
 </a>
 
