@@ -31,9 +31,17 @@ feishu-cli doc create --title "文档标题" --output json
 # 创建新文档
 /feishu-write "文档标题"
 
-# 更新已有文档
+# 更新已有文档（默认覆盖原内容）
 /feishu-write <document_id>
 ```
+
+## 决策规则
+
+1. **创建新文档**：使用 `feishu-cli doc import <markdown> --title "<title>"`。
+2. **更新已有文档默认覆盖**：用户说“更新 / 改写 / 同步 / 重写文档”时，默认使用 `--mode replace` 覆盖原内容。
+3. **只有明确要求追加时才 append**：如果用户明确说“追加一段 / 保留原文再加内容”，再改用 `--mode append` 或 `doc add`。
+4. **禁止无模式更新已有文档**：不要使用 `feishu-cli doc import ... --document-id <document_id>`，因为默认是追加。
+5. **默认不发送飞书通知消息**：写入完成后直接在当前对话反馈结果；只有用户明确要求时才发送飞书通知。
 
 ## 执行流程
 
@@ -52,9 +60,9 @@ feishu-cli doc create --title "文档标题" --output json
    feishu-cli doc import /tmp/feishu_write_<timestamp>.md --title "文档标题"
    ```
 
-4. **通知用户**
-   - 提供文档链接
-   - 发送飞书消息通知
+4. **反馈结果**
+   - 默认在当前对话提供文档链接和结果摘要
+   - 只有用户明确要求时才发送飞书消息通知
 
 ### 更新已有文档
 
@@ -66,9 +74,14 @@ feishu-cli doc create --title "文档标题" --output json
 2. **修改内容**
    - 根据用户需求修改 Markdown 文件
 
-3. **重新导入**
+3. **覆盖回写**
    ```bash
-   feishu-cli doc import /tmp/feishu_updated.md --document-id <document_id>
+   feishu-cli doc import /tmp/feishu_updated.md --document-id <document_id> --mode replace
+   ```
+
+   等价命令：
+   ```bash
+   feishu-cli doc replace <document_id> /tmp/feishu_updated.md --force
    ```
 
 ## 支持的 Markdown 语法

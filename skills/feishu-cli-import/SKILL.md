@@ -4,7 +4,7 @@ description: >-
   从 Markdown 文件导入创建飞书文档。支持嵌套列表、Mermaid/PlantUML 图表自动转画板、
   大表格自动拆分、公式、Callout 高亮块。当用户请求"导入 Markdown"、"从 md 创建文档"、
   "上传 Markdown"、"Markdown 转飞书"、"md 导入"时使用。
-argument-hint: <markdown_file> [--title "标题"] [--verbose]
+argument-hint: <markdown_file> [--title "标题"] [--document-id <doc_id>] [--mode replace|append] [--verbose]
 user-invocable: true
 allowed-tools: Bash, Read
 ---
@@ -33,12 +33,23 @@ allowed-tools: Bash, Read
 # 创建新文档
 /feishu-import ./document.md --title "文档标题"
 
-# 更新已有文档
-/feishu-import ./document.md --document-id <existing_doc_id>
+# 覆盖已有文档（默认更新方式）
+/feishu-import ./document.md --document-id <existing_doc_id> --mode replace
+
+# 明确追加到已有文档末尾
+/feishu-import ./appendix.md --document-id <existing_doc_id> --mode append
 
 # 上传本地图片
 /feishu-import ./document.md --title "带图文档" --upload-images
 ```
+
+## 决策规则
+
+1. **创建新文档**：未提供 `--document-id` 时，使用 `feishu-cli doc import <file.md> --title "<title>"`。
+2. **已有文档默认覆盖**：只要是“更新/改写/同步/重生成/覆盖已有文档”，默认使用 `--mode replace`。
+3. **只有明确说追加才允许 append**：用户明确提到“追加 / append / 附加到末尾 / 保留原内容再加新内容”时，才使用 `--mode append`。
+4. **禁止省略模式更新已有文档**：不要对已有文档直接使用 `feishu-cli doc import <file.md> --document-id <doc_id>`，因为默认行为是追加，不是覆盖。
+5. **默认不发送飞书通知消息**：完成创建/覆盖/追加后，直接在对话中反馈结果；只有用户明确要求时才额外发送 `feishu-cli msg send` 通知。
 
 ## 执行流程
 
@@ -58,17 +69,33 @@ allowed-tools: Bash, Read
    feishu-cli perm add <document_id> --doc-type docx --member-type email --member-id user@example.com --perm full_access
    ```
 
-4. **发送通知**
-   通知用户文档已创建
+4. **反馈结果**
+   默认在当前对话中返回文档链接和导入摘要；只有用户明确要求时才发送飞书通知消息
 
-### 更新已有文档
+### 覆盖已有文档（默认）
 
-1. **执行更新**
+1. **执行覆盖导入**
    ```bash
-   feishu-cli doc import <file.md> --document-id <doc_id> [--upload-images]
+   feishu-cli doc import <file.md> --document-id <doc_id> --mode replace [--upload-images]
    ```
 
-2. **通知用户**
+2. **可选等价命令**
+   ```bash
+   feishu-cli doc replace <doc_id> <file.md> --force
+   ```
+
+3. **反馈结果**
+   默认在当前对话中返回文档链接和覆盖摘要；只有用户明确要求时才发送飞书通知消息
+
+### 追加到已有文档末尾（仅在用户明确要求时）
+
+1. **执行追加导入**
+   ```bash
+   feishu-cli doc import <file.md> --document-id <doc_id> --mode append [--upload-images]
+   ```
+
+2. **反馈结果**
+   默认在当前对话中返回文档链接和追加摘要；只有用户明确要求时才发送飞书通知消息
 
 ## 参数说明
 
@@ -76,7 +103,9 @@ allowed-tools: Bash, Read
 |------|------|--------|
 | markdown_file | Markdown 文件路径 | 必需 |
 | --title | 新文档标题 | 文件名 |
-| --document-id | 更新已有文档 | 创建新文档 |
+| --document-id | 目标已有文档 ID | 创建新文档 |
+| --mode | 已有文档导入模式：`replace`=覆盖，`append`=追加 | 已有文档默认 `append`；本技能默认优先 `replace` |
+| --replace | 覆盖已有文档（等价于 `--mode replace`） | 否 |
 | --upload-images | 上传本地图片 | 是（默认开启） |
 | --folder, -f | 新文档的目标文件夹 Token | 根目录 |
 | --diagram-workers | 图表 (Mermaid/PlantUML) 并发导入数 | 5 |
@@ -201,8 +230,11 @@ $\int_{0}^{\infty} e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$
 # 创建新文档
 /feishu-import ./meeting-notes.md --title "会议纪要"
 
-# 更新现有文档
-/feishu-import ./updated-spec.md --document-id <document_id>
+# 覆盖现有文档
+/feishu-import ./updated-spec.md --document-id <document_id> --mode replace
+
+# 追加附录到现有文档末尾
+/feishu-import ./appendix.md --document-id <document_id> --mode append
 
 # 带图片导入（创建占位块，Open API 暂不支持插入实际图片）
 /feishu-import ./blog-post.md --title "博客文章" --upload-images

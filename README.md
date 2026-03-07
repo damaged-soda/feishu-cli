@@ -45,6 +45,9 @@ feishu-cli 是一个功能完整的飞书开放平台命令行工具。它将飞
 # 导入：Markdown → 飞书文档
 feishu-cli doc import report.md --title "技术报告" --verbose
 
+# 覆盖：Markdown → 已有飞书文档（import 模式）
+feishu-cli doc import report.md --document-id <document_id> --mode replace
+
 # 覆写：Markdown → 已有飞书文档
 feishu-cli doc replace <document_id> report.md
 
@@ -52,8 +55,8 @@ feishu-cli doc replace <document_id> report.md
 feishu-cli doc export <document_id> -o doc.md --download-images
 ```
 
-如果你要用一份新的 Markdown 完整覆盖已有文档内容，请使用 `feishu-cli doc replace`。
-`feishu-cli doc import --document-id ...` 仍然是向已有文档追加导入内容，不会自动清空旧内容。
+如果你要用一份新的 Markdown 完整覆盖已有文档内容，可以使用 `feishu-cli doc import --document-id ... --mode replace`，或等价的 `feishu-cli doc replace`。
+`feishu-cli doc import --document-id ...` 在未指定模式时仍然是向已有文档追加导入内容，不会自动清空旧内容。
 
 **支持的语法**：标题（6 级）、段落、列表（无限深度嵌套）、任务列表、代码块、引用、Callout（6 种类型）、表格（自动拆分）、分割线、图片、链接、公式、粗体 / 斜体 / 删除线 / 下划线 / 行内代码 / 高亮
 
@@ -263,6 +266,12 @@ feishu-cli doc create --title "新文档"
 
 # 导入 Markdown（核心功能）
 feishu-cli doc import doc.md --title "文档标题" --verbose
+
+# 覆盖已有文档内容
+feishu-cli doc import doc.md --document-id <doc_id> --mode replace
+
+# 追加到已有文档末尾
+feishu-cli doc import doc.md --document-id <doc_id> --mode append
 
 # 导出为 Markdown
 feishu-cli doc export <doc_id> -o output.md --download-images

@@ -11,6 +11,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type replaceContentRequest struct {
+	documentID     string
+	source         string
+	sourceType     string
+	parentBlockID  string
+	allowEmpty     bool
+	force          bool
+	uploadImages   bool
+	diagramWorkers int
+	tableWorkers   int
+	diagramRetries int
+	output         string
+	verbose        bool
+	skipValidation bool
+}
+
+var runReplaceContentFn = runReplaceContent
+
 var replaceContentCmd = &cobra.Command{
 	Use:   "replace <document_id> [source]",
 	Short: "用 Markdown 替换父块下的全部子块",
@@ -45,170 +63,173 @@ var replaceContentCmd = &cobra.Command{
   feishu-cli doc replace DOC_ID --content "" --source-type content --allow-empty --force`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := config.Validate(); err != nil {
-			return err
-		}
-
-		documentID := args[0]
+		req := replaceContentRequest{documentID: args[0]}
 		contentStr, _ := cmd.Flags().GetString("content")
 		contentFile, _ := cmd.Flags().GetString("content-file")
-		sourceType, _ := cmd.Flags().GetString("source-type")
-		parentBlockID, _ := cmd.Flags().GetString("block-id")
-		allowEmpty, _ := cmd.Flags().GetBool("allow-empty")
-		force, _ := cmd.Flags().GetBool("force")
-		uploadImages, _ := cmd.Flags().GetBool("upload-images")
-		diagramWorkers, _ := cmd.Flags().GetInt("diagram-workers")
-		tableWorkers, _ := cmd.Flags().GetInt("table-workers")
-		diagramRetries, _ := cmd.Flags().GetInt("diagram-retries")
-		output, _ := cmd.Flags().GetString("output")
-
-		var source string
-		var basePath string
+		req.sourceType, _ = cmd.Flags().GetString("source-type")
+		req.parentBlockID, _ = cmd.Flags().GetString("block-id")
+		req.allowEmpty, _ = cmd.Flags().GetBool("allow-empty")
+		req.force, _ = cmd.Flags().GetBool("force")
+		req.uploadImages, _ = cmd.Flags().GetBool("upload-images")
+		req.diagramWorkers, _ = cmd.Flags().GetInt("diagram-workers")
+		req.tableWorkers, _ = cmd.Flags().GetInt("table-workers")
+		req.diagramRetries, _ = cmd.Flags().GetInt("diagram-retries")
+		req.output, _ = cmd.Flags().GetString("output")
 
 		if len(args) > 1 {
-			source = args[1]
-			basePath = filepath.Dir(source)
-			if sourceType == "" {
-				sourceType = "file"
+			req.source = args[1]
+			if req.sourceType == "" {
+				req.sourceType = "file"
 			}
 		} else if contentFile != "" {
-			source = contentFile
-			basePath = filepath.Dir(contentFile)
-			sourceType = "file"
+			req.source = contentFile
+			req.sourceType = "file"
 		} else if contentStr != "" || cmd.Flags().Changed("content") {
-			source = contentStr
-			sourceType = "content"
+			req.source = contentStr
+			req.sourceType = "content"
 		} else {
 			return fmt.Errorf("必须指定源文件（第二个参数）、--content 或 --content-file")
 		}
 
-		var contentData string
-		if sourceType == "file" {
-			data, err := os.ReadFile(source)
-			if err != nil {
-				return fmt.Errorf("读取 Markdown 文件失败: %w", err)
-			}
-			contentData = string(data)
-		} else {
-			contentData = source
-		}
+		return runReplaceContent(req)
+	},
+}
 
-		if parentBlockID == "" {
-			parentBlockID = documentID
+func runReplaceContent(req replaceContentRequest) error {
+	if !req.skipValidation {
+		if err := config.Validate(); err != nil {
+			return err
 		}
+	}
 
-		oldChildren, err := client.GetAllBlockChildren(documentID, parentBlockID)
+	var contentData string
+	basePath := ""
+	if req.sourceType == "file" {
+		basePath = filepath.Dir(req.source)
+		data, err := os.ReadFile(req.source)
 		if err != nil {
-			return fmt.Errorf("获取目标父块子块失败: %w", err)
+			return fmt.Errorf("读取 Markdown 文件失败: %w", err)
 		}
-		oldCount := len(oldChildren)
+		contentData = string(data)
+	} else {
+		contentData = req.source
+	}
 
-		trimmedContent := strings.TrimSpace(contentData)
-		if trimmedContent == "" && !allowEmpty {
-			return fmt.Errorf("输入内容为空；如需清空目标父块，请显式指定 --allow-empty")
-		}
+	if req.parentBlockID == "" {
+		req.parentBlockID = req.documentID
+	}
 
-		if !force {
-			prompt := fmt.Sprintf("确定要替换父块 %s 下的全部 %d 个子块吗？此操作会先写入新内容，再删除旧内容，且不可恢复", parentBlockID, oldCount)
-			if !confirmAction(prompt) {
-				fmt.Println("操作已取消")
-				return nil
-			}
-		}
+	oldChildren, err := client.GetAllBlockChildren(req.documentID, req.parentBlockID)
+	if err != nil {
+		return fmt.Errorf("获取目标父块子块失败: %w", err)
+	}
+	oldCount := len(oldChildren)
 
-		if trimmedContent == "" {
-			if oldCount > 0 {
-				if err := client.DeleteBlocks(documentID, parentBlockID, 0, oldCount); err != nil {
-					return fmt.Errorf("清空目标父块失败: %w", err)
-				}
-			}
-			if output == "json" {
-				return printJSON(map[string]any{
-					"document_id":       documentID,
-					"parent_block_id":   parentBlockID,
-					"replaced_children": oldCount,
-					"top_level_created": 0,
-					"blocks":            0,
-				})
-			}
-			fmt.Printf("替换成功！\n")
-			fmt.Printf("  文档 ID: %s\n", documentID)
-			fmt.Printf("  父块 ID: %s\n", parentBlockID)
-			fmt.Printf("  替换前子块数: %d\n", oldCount)
-			fmt.Printf("  新增顶层块数: 0\n")
-			fmt.Printf("  总块数: 0\n")
-			fmt.Printf("  链接: https://feishu.cn/docx/%s\n", documentID)
+	trimmedContent := strings.TrimSpace(contentData)
+	if trimmedContent == "" && !req.allowEmpty {
+		return fmt.Errorf("输入内容为空；如需清空目标父块，请显式指定 --allow-empty")
+	}
+
+	if !req.force {
+		prompt := fmt.Sprintf("确定要替换父块 %s 下的全部 %d 个子块吗？此操作会先写入新内容，再删除旧内容，且不可恢复", req.parentBlockID, oldCount)
+		if !confirmAction(prompt) {
+			fmt.Println("操作已取消")
 			return nil
 		}
+	}
 
-		stats, err := importMarkdownIntoParent(documentID, parentBlockID, contentData, basePath, uploadImages, false, diagramWorkers, tableWorkers, diagramRetries)
-		if err != nil {
-			cleanupErr := cleanupAppendedChildren(documentID, parentBlockID, oldCount)
-			if cleanupErr != nil {
-				return fmt.Errorf("替换失败: %w；同时清理新增内容失败: %v", err, cleanupErr)
-			}
-			return fmt.Errorf("替换失败，已尝试保留旧内容: %w", err)
-		}
-
-		currentChildren, err := client.GetAllBlockChildren(documentID, parentBlockID)
-		if err != nil {
-			return fmt.Errorf("获取替换后的子块失败: %w", err)
-		}
-		topLevelCreated := len(currentChildren) - oldCount
-		if topLevelCreated < 0 {
-			topLevelCreated = 0
-		}
-
+	if trimmedContent == "" {
 		if oldCount > 0 {
-			if err := client.DeleteBlocks(documentID, parentBlockID, 0, oldCount); err != nil {
-				cleanupErr := cleanupAppendedChildren(documentID, parentBlockID, oldCount)
-				if cleanupErr != nil {
-					return fmt.Errorf("删除旧内容失败: %w；同时清理新增内容失败: %v", err, cleanupErr)
-				}
-				return fmt.Errorf("删除旧内容失败，已尝试清理新增内容以保留旧内容: %w", err)
+			if err := client.DeleteBlocks(req.documentID, req.parentBlockID, 0, oldCount); err != nil {
+				return fmt.Errorf("清空目标父块失败: %w", err)
 			}
 		}
-
-		if output == "json" {
+		if req.output == "json" {
 			return printJSON(map[string]any{
-				"document_id":       documentID,
-				"parent_block_id":   parentBlockID,
+				"document_id":       req.documentID,
+				"parent_block_id":   req.parentBlockID,
 				"replaced_children": oldCount,
-				"top_level_created": topLevelCreated,
-				"blocks":            stats.totalBlocks,
-				"diagram_total":     stats.diagramTotal,
-				"diagram_success":   stats.diagramSuccess,
-				"diagram_failed":    stats.diagramFailed,
-				"diagram_fallback":  stats.fallbackSuccess,
-				"table_total":       stats.tableTotal,
-				"table_success":     stats.tableSuccess,
-				"table_failed":      stats.tableFailed,
-				"image_skipped":     stats.imageSkipped,
+				"top_level_created": 0,
+				"blocks":            0,
 			})
 		}
-
 		fmt.Printf("替换成功！\n")
-		fmt.Printf("  文档 ID: %s\n", documentID)
-		fmt.Printf("  父块 ID: %s\n", parentBlockID)
+		fmt.Printf("  文档 ID: %s\n", req.documentID)
+		fmt.Printf("  父块 ID: %s\n", req.parentBlockID)
 		fmt.Printf("  替换前子块数: %d\n", oldCount)
-		fmt.Printf("  新增顶层块数: %d\n", topLevelCreated)
-		fmt.Printf("  总块数: %d\n", stats.totalBlocks)
-		if stats.imageSkipped > 0 {
-			fmt.Printf("  图片: %d 张 (已创建空占位块，飞书 API 暂不支持通过 Open API 插入图片)\n", stats.imageSkipped)
-		}
-		if stats.tableTotal > 0 {
-			fmt.Printf("  表格: %d/%d 成功\n", stats.tableSuccess, stats.tableTotal)
-		}
-		if stats.diagramTotal > 0 {
-			if stats.fallbackSuccess > 0 {
-				fmt.Printf("  图表: %d/%d 成功 (%d 降级为代码块)\n", stats.diagramSuccess, stats.diagramTotal, stats.fallbackSuccess)
-			} else {
-				fmt.Printf("  图表: %d/%d 成功\n", stats.diagramSuccess, stats.diagramTotal)
-			}
-		}
-		fmt.Printf("  链接: https://feishu.cn/docx/%s\n", documentID)
+		fmt.Printf("  新增顶层块数: 0\n")
+		fmt.Printf("  总块数: 0\n")
+		fmt.Printf("  链接: https://feishu.cn/docx/%s\n", req.documentID)
 		return nil
-	},
+	}
+
+	stats, err := importMarkdownIntoParentFn(req.documentID, req.parentBlockID, contentData, basePath, req.uploadImages, req.verbose, req.diagramWorkers, req.tableWorkers, req.diagramRetries)
+	if err != nil {
+		cleanupErr := cleanupAppendedChildren(req.documentID, req.parentBlockID, oldCount)
+		if cleanupErr != nil {
+			return fmt.Errorf("替换失败: %w；同时清理新增内容失败: %v", err, cleanupErr)
+		}
+		return fmt.Errorf("替换失败，已尝试保留旧内容: %w", err)
+	}
+
+	currentChildren, err := client.GetAllBlockChildren(req.documentID, req.parentBlockID)
+	if err != nil {
+		return fmt.Errorf("获取替换后的子块失败: %w", err)
+	}
+	topLevelCreated := len(currentChildren) - oldCount
+	if topLevelCreated < 0 {
+		topLevelCreated = 0
+	}
+
+	if oldCount > 0 {
+		if err := client.DeleteBlocks(req.documentID, req.parentBlockID, 0, oldCount); err != nil {
+			cleanupErr := cleanupAppendedChildren(req.documentID, req.parentBlockID, oldCount)
+			if cleanupErr != nil {
+				return fmt.Errorf("删除旧内容失败: %w；同时清理新增内容失败: %v", err, cleanupErr)
+			}
+			return fmt.Errorf("删除旧内容失败，已尝试清理新增内容以保留旧内容: %w", err)
+		}
+	}
+
+	if req.output == "json" {
+		return printJSON(map[string]any{
+			"document_id":       req.documentID,
+			"parent_block_id":   req.parentBlockID,
+			"replaced_children": oldCount,
+			"top_level_created": topLevelCreated,
+			"blocks":            stats.totalBlocks,
+			"diagram_total":     stats.diagramTotal,
+			"diagram_success":   stats.diagramSuccess,
+			"diagram_failed":    stats.diagramFailed,
+			"diagram_fallback":  stats.fallbackSuccess,
+			"table_total":       stats.tableTotal,
+			"table_success":     stats.tableSuccess,
+			"table_failed":      stats.tableFailed,
+			"image_skipped":     stats.imageSkipped,
+		})
+	}
+
+	fmt.Printf("替换成功！\n")
+	fmt.Printf("  文档 ID: %s\n", req.documentID)
+	fmt.Printf("  父块 ID: %s\n", req.parentBlockID)
+	fmt.Printf("  替换前子块数: %d\n", oldCount)
+	fmt.Printf("  新增顶层块数: %d\n", topLevelCreated)
+	fmt.Printf("  总块数: %d\n", stats.totalBlocks)
+	if stats.imageSkipped > 0 {
+		fmt.Printf("  图片: %d 张 (已创建空占位块，飞书 API 暂不支持通过 Open API 插入图片)\n", stats.imageSkipped)
+	}
+	if stats.tableTotal > 0 {
+		fmt.Printf("  表格: %d/%d 成功\n", stats.tableSuccess, stats.tableTotal)
+	}
+	if stats.diagramTotal > 0 {
+		if stats.fallbackSuccess > 0 {
+			fmt.Printf("  图表: %d/%d 成功 (%d 降级为代码块)\n", stats.diagramSuccess, stats.diagramTotal, stats.fallbackSuccess)
+		} else {
+			fmt.Printf("  图表: %d/%d 成功\n", stats.diagramSuccess, stats.diagramTotal)
+		}
+	}
+	fmt.Printf("  链接: https://feishu.cn/docx/%s\n", req.documentID)
+	return nil
 }
 
 func cleanupAppendedChildren(documentID, parentBlockID string, oldCount int) error {

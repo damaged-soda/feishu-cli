@@ -254,6 +254,28 @@ type importStats struct {
 	phase3Duration  time.Duration
 }
 
+const (
+	importModeAppend  = "append"
+	importModeReplace = "replace"
+)
+
+type importMarkdownRequest struct {
+	filePath        string
+	title           string
+	documentID      string
+	uploadImages    bool
+	folder          string
+	verbose         bool
+	output          string
+	diagramWorkers  int
+	tableWorkers    int
+	diagramRetries  int
+	mode            string
+	replaceExisting bool
+}
+
+var importMarkdownIntoParentFn = importMarkdownIntoParent
+
 var importMarkdownCmd = &cobra.Command{
 	Use:   "import <file.md>",
 	Short: "从 Markdown 导入创建文档或向已有文档追加内容",
@@ -263,143 +285,214 @@ var importMarkdownCmd = &cobra.Command{
   - 三阶段流水线: 顺序创建 → 并发处理 → 降级容错
   - Mermaid/PlantUML 图表自动转换为飞书画板 (重试+失败降级为代码块)
   - 表格并发填充，大表格自动拆分
+  - 对已有文档默认追加导入，可通过 --mode replace 或 --replace 覆盖旧内容
   - 详细进度和耗时统计
 
 示例:
   feishu-cli doc import doc.md --title "我的文档"
   feishu-cli doc import doc.md --document-id ABC123def456
+  feishu-cli doc import doc.md --document-id ABC123def456 --mode replace
   feishu-cli doc import doc.md --title "我的文档" --verbose
   feishu-cli doc import doc.md --title "测试" --diagram-workers 5 --table-workers 8`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := config.Validate(); err != nil {
-			return err
-		}
-
-		filePath := args[0]
-		title, _ := cmd.Flags().GetString("title")
-		documentID, _ := cmd.Flags().GetString("document-id")
-		uploadImages, _ := cmd.Flags().GetBool("upload-images")
-		folder, _ := cmd.Flags().GetString("folder")
-		verbose, _ := cmd.Flags().GetBool("verbose")
-		diagramWorkers, _ := cmd.Flags().GetInt("diagram-workers")
-		tableWorkers, _ := cmd.Flags().GetInt("table-workers")
-		diagramRetries, _ := cmd.Flags().GetInt("diagram-retries")
+		req := importMarkdownRequest{filePath: args[0]}
+		req.title, _ = cmd.Flags().GetString("title")
+		req.documentID, _ = cmd.Flags().GetString("document-id")
+		req.uploadImages, _ = cmd.Flags().GetBool("upload-images")
+		req.folder, _ = cmd.Flags().GetString("folder")
+		req.verbose, _ = cmd.Flags().GetBool("verbose")
+		req.output, _ = cmd.Flags().GetString("output")
+		req.diagramWorkers, _ = cmd.Flags().GetInt("diagram-workers")
+		req.tableWorkers, _ = cmd.Flags().GetInt("table-workers")
+		req.diagramRetries, _ = cmd.Flags().GetInt("diagram-retries")
+		req.mode, _ = cmd.Flags().GetString("mode")
+		req.replaceExisting, _ = cmd.Flags().GetBool("replace")
 
 		// 向后兼容: 如果用户使用了旧的 --mermaid-workers/--mermaid-retries，覆盖新值
 		if cmd.Flags().Changed("mermaid-workers") {
-			diagramWorkers, _ = cmd.Flags().GetInt("mermaid-workers")
+			req.diagramWorkers, _ = cmd.Flags().GetInt("mermaid-workers")
 		}
 		if cmd.Flags().Changed("mermaid-retries") {
-			diagramRetries, _ = cmd.Flags().GetInt("mermaid-retries")
+			req.diagramRetries, _ = cmd.Flags().GetInt("mermaid-retries")
 		}
 
-		// 检查文件大小限制（100MB）
-		const maxFileSize = 100 * 1024 * 1024
-		fileInfo, err := os.Stat(filePath)
-		if err != nil {
-			return fmt.Errorf("获取文件信息失败: %w", err)
-		}
-		if fileInfo.Size() > maxFileSize {
-			return fmt.Errorf("文件超过最大限制 %d MB", maxFileSize/(1024*1024))
-		}
+		return runImportMarkdown(req)
+	},
+}
 
-		// Read markdown file
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return fmt.Errorf("读取文件失败: %w", err)
+func normalizeImportMode(documentID, mode string, replaceExisting bool) (string, error) {
+	if documentID == "" {
+		if replaceExisting {
+			return "", fmt.Errorf("创建新文档时不能指定 --replace；如需覆盖已有文档，请同时传入 --document-id")
 		}
+		if mode != "" {
+			return "", fmt.Errorf("创建新文档时不能指定 --mode；如需覆盖或追加已有文档，请同时传入 --document-id")
+		}
+		return "", nil
+	}
 
-		basePath := filepath.Dir(filePath)
-		markdownText := string(content)
+	if replaceExisting {
+		if mode != "" && mode != importModeReplace {
+			return "", fmt.Errorf("--replace 与 --mode=%s 冲突，请统一使用覆盖模式", mode)
+		}
+		return importModeReplace, nil
+	}
 
-		// If no document ID, create new document
-		if documentID == "" {
+	if mode == "" {
+		return importModeAppend, nil
+	}
+
+	switch mode {
+	case importModeAppend, importModeReplace:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("--mode 仅支持 append 或 replace")
+	}
+}
+
+func printImportAppendNotice(documentID, output string) {
+	if documentID == "" || output == "json" {
+		return
+	}
+	fmt.Printf("提示: 当前会向已有文档 %s 追加导入内容；如需完整覆盖旧内容，请改用 --mode replace 或 feishu-cli doc replace。\n\n", documentID)
+}
+
+func runImportMarkdown(req importMarkdownRequest) error {
+	if err := config.Validate(); err != nil {
+		return err
+	}
+
+	mode, err := normalizeImportMode(req.documentID, req.mode, req.replaceExisting)
+	if err != nil {
+		return err
+	}
+
+	// 检查文件大小限制（100MB）
+	const maxFileSize = 100 * 1024 * 1024
+	fileInfo, err := os.Stat(req.filePath)
+	if err != nil {
+		return fmt.Errorf("获取文件信息失败: %w", err)
+	}
+	if fileInfo.Size() > maxFileSize {
+		return fmt.Errorf("文件超过最大限制 %d MB", maxFileSize/(1024*1024))
+	}
+
+	if mode == importModeReplace {
+		return runReplaceContentFn(replaceContentRequest{
+			documentID:     req.documentID,
+			source:         req.filePath,
+			sourceType:     "file",
+			parentBlockID:  req.documentID,
+			force:          true,
+			uploadImages:   req.uploadImages,
+			diagramWorkers: req.diagramWorkers,
+			tableWorkers:   req.tableWorkers,
+			diagramRetries: req.diagramRetries,
+			output:         req.output,
+			verbose:        req.verbose,
+			skipValidation: true,
+		})
+	}
+
+	// Read markdown file
+	content, err := os.ReadFile(req.filePath)
+	if err != nil {
+		return fmt.Errorf("读取文件失败: %w", err)
+	}
+
+	basePath := filepath.Dir(req.filePath)
+	markdownText := string(content)
+	documentID := req.documentID
+
+	// If no document ID, create new document
+	if documentID == "" {
+		title := req.title
+		if title == "" {
+			// Use filename as title
+			title = filepath.Base(req.filePath)
+			ext := filepath.Ext(title)
+			if len(ext) < len(title) {
+				title = title[:len(title)-len(ext)]
+			}
 			if title == "" {
-				// Use filename as title
-				title = filepath.Base(filePath)
-				ext := filepath.Ext(title)
-				if len(ext) < len(title) {
-					title = title[:len(title)-len(ext)]
-				}
-				if title == "" {
-					title = "无标题文档"
-				}
-			}
-
-			doc, err := client.CreateDocument(title, folder)
-			if err != nil {
-				return fmt.Errorf("创建文档失败: %w", err)
-			}
-			if doc.DocumentId == nil {
-				return fmt.Errorf("文档已创建但未返回ID")
-			}
-			documentID = *doc.DocumentId
-			fmt.Printf("已创建文档: %s\n", documentID)
-			fmt.Printf("链接: https://feishu.cn/docx/%s\n\n", documentID)
-			if err := applyAutoPermissionIfEnabled(documentID, "docx"); err != nil {
-				return fmt.Errorf("创建文档后自动授权失败: %w", err)
+				title = "无标题文档"
 			}
 		}
 
-		stats, err := importMarkdownIntoParent(documentID, documentID, markdownText, basePath, uploadImages, verbose, diagramWorkers, tableWorkers, diagramRetries)
+		doc, err := client.CreateDocument(title, req.folder)
 		if err != nil {
+			return fmt.Errorf("创建文档失败: %w", err)
+		}
+		if doc.DocumentId == nil {
+			return fmt.Errorf("文档已创建但未返回ID")
+		}
+		documentID = *doc.DocumentId
+		fmt.Printf("已创建文档: %s\n", documentID)
+		fmt.Printf("链接: https://feishu.cn/docx/%s\n\n", documentID)
+		if err := applyAutoPermissionIfEnabled(documentID, "docx"); err != nil {
+			return fmt.Errorf("创建文档后自动授权失败: %w", err)
+		}
+	} else {
+		printImportAppendNotice(documentID, req.output)
+	}
+
+	stats, err := importMarkdownIntoParentFn(documentID, documentID, markdownText, basePath, req.uploadImages, req.verbose, req.diagramWorkers, req.tableWorkers, req.diagramRetries)
+	if err != nil {
+		return err
+	}
+
+	// === 输出结果 ===
+	totalDuration := stats.phase1Duration + stats.phase2Duration + stats.phase3Duration
+
+	if req.output == "json" {
+		if err := printJSON(map[string]any{
+			"document_id":      documentID,
+			"blocks":           stats.totalBlocks,
+			"diagram_total":    stats.diagramTotal,
+			"diagram_success":  stats.diagramSuccess,
+			"diagram_failed":   stats.diagramFailed,
+			"mermaid_count":    stats.mermaidCount,
+			"plantuml_count":   stats.plantumlCount,
+			"diagram_fallback": stats.fallbackSuccess,
+			"table_total":      stats.tableTotal,
+			"table_success":    stats.tableSuccess,
+			"table_failed":     stats.tableFailed,
+			"image_skipped":    stats.imageSkipped,
+			"duration_seconds": totalDuration.Seconds(),
+			"phase1_seconds":   stats.phase1Duration.Seconds(),
+			"phase2_seconds":   stats.phase2Duration.Seconds(),
+			"phase3_seconds":   stats.phase3Duration.Seconds(),
+		}); err != nil {
 			return err
 		}
-
-		// === 输出结果 ===
-		totalDuration := stats.phase1Duration + stats.phase2Duration + stats.phase3Duration
-
-		output, _ := cmd.Flags().GetString("output")
-		if output == "json" {
-			if err := printJSON(map[string]any{
-				"document_id":      documentID,
-				"blocks":           stats.totalBlocks,
-				"diagram_total":    stats.diagramTotal,
-				"diagram_success":  stats.diagramSuccess,
-				"diagram_failed":   stats.diagramFailed,
-				"mermaid_count":    stats.mermaidCount,
-				"plantuml_count":   stats.plantumlCount,
-				"diagram_fallback": stats.fallbackSuccess,
-				"table_total":      stats.tableTotal,
-				"table_success":    stats.tableSuccess,
-				"table_failed":     stats.tableFailed,
-				"image_skipped":    stats.imageSkipped,
-				"duration_seconds": totalDuration.Seconds(),
-				"phase1_seconds":   stats.phase1Duration.Seconds(),
-				"phase2_seconds":   stats.phase2Duration.Seconds(),
-				"phase3_seconds":   stats.phase3Duration.Seconds(),
-			}); err != nil {
-				return err
-			}
-		} else {
-			fmt.Println("导入完成!")
-			fmt.Printf("  文档ID: %s\n", documentID)
-			fmt.Printf("  添加块数: %d\n", stats.totalBlocks)
-			if stats.imageSkipped > 0 {
-				fmt.Printf("  图片: %d 张 (已创建空占位块，飞书 API 暂不支持通过 Open API 插入图片)\n", stats.imageSkipped)
-			}
-			if stats.tableTotal > 0 {
-				fmt.Printf("  表格: %d/%d 成功\n", stats.tableSuccess, stats.tableTotal)
-			}
-			if stats.diagramTotal > 0 {
-				var diagramDetail string
-				if stats.mermaidCount > 0 && stats.plantumlCount > 0 {
-					diagramDetail = fmt.Sprintf(" (Mermaid: %d, PlantUML: %d)", stats.mermaidCount, stats.plantumlCount)
-				}
-				if stats.fallbackSuccess > 0 {
-					fmt.Printf("  图表: %d/%d 成功%s (%d 降级为代码块)\n",
-						stats.diagramSuccess, stats.diagramTotal, diagramDetail, stats.fallbackSuccess)
-				} else {
-					fmt.Printf("  图表: %d/%d 成功%s\n", stats.diagramSuccess, stats.diagramTotal, diagramDetail)
-				}
-			}
-			fmt.Printf("  总耗时: %.1fs\n", totalDuration.Seconds())
-			fmt.Printf("  链接: https://feishu.cn/docx/%s\n", documentID)
+	} else {
+		fmt.Println("导入完成!")
+		fmt.Printf("  文档ID: %s\n", documentID)
+		fmt.Printf("  添加块数: %d\n", stats.totalBlocks)
+		if stats.imageSkipped > 0 {
+			fmt.Printf("  图片: %d 张 (已创建空占位块，飞书 API 暂不支持通过 Open API 插入图片)\n", stats.imageSkipped)
 		}
+		if stats.tableTotal > 0 {
+			fmt.Printf("  表格: %d/%d 成功\n", stats.tableSuccess, stats.tableTotal)
+		}
+		if stats.diagramTotal > 0 {
+			var diagramDetail string
+			if stats.mermaidCount > 0 && stats.plantumlCount > 0 {
+				diagramDetail = fmt.Sprintf(" (Mermaid: %d, PlantUML: %d)", stats.mermaidCount, stats.plantumlCount)
+			}
+			if stats.fallbackSuccess > 0 {
+				fmt.Printf("  图表: %d/%d 成功%s (%d 降级为代码块)\n",
+					stats.diagramSuccess, stats.diagramTotal, diagramDetail, stats.fallbackSuccess)
+			} else {
+				fmt.Printf("  图表: %d/%d 成功%s\n", stats.diagramSuccess, stats.diagramTotal, diagramDetail)
+			}
+		}
+		fmt.Printf("  总耗时: %.1fs\n", totalDuration.Seconds())
+		fmt.Printf("  链接: https://feishu.cn/docx/%s\n", documentID)
+	}
 
-		return nil
-	},
+	return nil
 }
 
 // phase1CreateBlocks 顺序创建所有文档块，收集待处理的图表和表格任务
@@ -1047,7 +1140,9 @@ func createDiagramCodeBlock(syntax, content string) *larkdocx.Block {
 func init() {
 	docCmd.AddCommand(importMarkdownCmd)
 	importMarkdownCmd.Flags().StringP("title", "t", "", "文档标题 (用于新建文档)")
-	importMarkdownCmd.Flags().StringP("document-id", "d", "", "已有文档ID (用于追加导入)")
+	importMarkdownCmd.Flags().StringP("document-id", "d", "", "已有文档ID (默认追加导入，可配合 --mode replace 覆盖)")
+	importMarkdownCmd.Flags().String("mode", "", "已有文档导入模式 (append/replace，默认 append)")
+	importMarkdownCmd.Flags().Bool("replace", false, "等价于 --mode replace，用 Markdown 覆盖已有文档内容")
 	importMarkdownCmd.Flags().Bool("upload-images", true, "上传本地图片")
 	importMarkdownCmd.Flags().StringP("folder", "f", "", "新文档的文件夹 Token")
 	importMarkdownCmd.Flags().StringP("output", "o", "", "输出格式 (json)")
