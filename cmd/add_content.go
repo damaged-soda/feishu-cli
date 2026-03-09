@@ -103,7 +103,7 @@ var addContentCmd = &cobra.Command{
 		}
 
 		if contentType == "markdown" {
-			return addContentMarkdown(documentID, blockID, contentData, basePath, uploadImages, index, output)
+			return addContentMarkdown(documentID, blockID, parseMarkdownDocument(contentData).Body, basePath, uploadImages, index, output)
 		}
 
 		// JSON 模式

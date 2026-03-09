@@ -24,11 +24,15 @@ var exportMarkdownCmd = &cobra.Command{
 使用 --download-images 可同时下载文档中的图片和画板（画板自动导出为 PNG），
 通过 --assets-dir 指定资源保存目录（默认 ./assets）。
 
+使用 --front-matter 可将飞书文档标题写入 YAML 元数据；
+正文中的第一个 # 标题会原样保留，不会与文档标题自动绑定。
+
 示例:
   feishu-cli doc export ABC123def456
   feishu-cli doc export ABC123def456 --output doc.md
   feishu-cli doc export ABC123def456 --download-images
-  feishu-cli doc export ABC123def456 --download-images --assets-dir ./images`,
+  feishu-cli doc export ABC123def456 --download-images --assets-dir ./images
+  feishu-cli doc export ABC123def456 --output doc.md --front-matter`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.Validate(); err != nil {
@@ -83,8 +87,13 @@ var exportMarkdownCmd = &cobra.Command{
 			if docErr == nil && doc != nil && doc.Title != nil {
 				docTitle = *doc.Title
 			}
-			fm := fmt.Sprintf("---\ntitle: %q\ndocument_id: %s\n---\n\n", docTitle, documentID)
-			markdown = fm + markdown
+			markdown, err = prependMarkdownFrontMatter(markdown, markdownMetadata{
+				Title:      docTitle,
+				DocumentID: documentID,
+			})
+			if err != nil {
+				return err
+			}
 		}
 
 		// Output
@@ -124,7 +133,7 @@ func init() {
 	exportMarkdownCmd.Flags().StringP("output", "o", "", "输出文件路径")
 	exportMarkdownCmd.Flags().Bool("download-images", false, "下载图片和画板到本地目录（画板自动导出为 PNG）")
 	exportMarkdownCmd.Flags().String("assets-dir", "./assets", "图片和画板的保存目录")
-	exportMarkdownCmd.Flags().Bool("front-matter", false, "添加 YAML front matter (标题和文档 ID)")
+	exportMarkdownCmd.Flags().Bool("front-matter", false, "添加 YAML front matter（用于保留飞书文档标题和文档 ID，不影响正文第一个 # 标题）")
 	exportMarkdownCmd.Flags().Bool("highlight", false, "保留文本颜色和背景色 (输出为 HTML span)")
 	exportMarkdownCmd.Flags().Bool("expand-mentions", true, "展开 @用户为友好格式 (需要 contact:user.base:readonly 权限)")
 }

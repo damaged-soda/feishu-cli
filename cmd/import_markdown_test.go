@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	larkdocx "github.com/larksuite/oapi-sdk-go/v3/service/docx/v1"
 	"github.com/riba2534/feishu-cli/internal/config"
 	"github.com/spf13/viper"
 )
@@ -272,5 +273,117 @@ func TestRunImportMarkdown_DefaultDocumentIDModeAppends(t *testing.T) {
 	}
 	if gotDiagramWorkers != 5 || gotTableWorkers != 3 || gotDiagramRetries != 9 {
 		t.Fatalf("并发参数未正确透传")
+	}
+}
+
+func TestRunImportMarkdown_NewDocumentUsesFrontMatterTitle(t *testing.T) {
+	initImportCommandTestConfig(t)
+
+	filePath := filepath.Join(t.TempDir(), "frontmatter.md")
+	content := "---\n" +
+		"title: 文档元标题\n" +
+		"document_id: old_doc_id\n" +
+		"---\n\n" +
+		"# 正文一级标题\n\n正文内容\n"
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatalf("写入测试 Markdown 失败: %v", err)
+	}
+
+	oldCreateDocumentFn := createDocumentFn
+	oldApplyAutoPermissionFn := applyAutoPermissionIfEnabledFn
+	oldImportFn := importMarkdownIntoParentFn
+	defer func() {
+		createDocumentFn = oldCreateDocumentFn
+		applyAutoPermissionIfEnabledFn = oldApplyAutoPermissionFn
+		importMarkdownIntoParentFn = oldImportFn
+	}()
+
+	var gotTitle string
+	createDocumentFn = func(title string, folderToken string) (*larkdocx.Document, error) {
+		gotTitle = title
+		documentID := "doc_new_123"
+		return &larkdocx.Document{DocumentId: &documentID}, nil
+	}
+
+	applyAutoPermissionIfEnabledFn = func(documentID string, docType string) error {
+		return nil
+	}
+
+	var gotDocumentID string
+	var gotParentBlockID string
+	var gotMarkdownText string
+	importMarkdownIntoParentFn = func(documentID string, parentBlockID string, markdownText string, basePath string, uploadImages bool, verbose bool, diagramWorkers int, tableWorkers int, diagramRetries int) (*importStats, error) {
+		gotDocumentID = documentID
+		gotParentBlockID = parentBlockID
+		gotMarkdownText = markdownText
+		return &importStats{}, nil
+	}
+
+	_ = captureStdout(t, func() {
+		err := runImportMarkdown(importMarkdownRequest{
+			filePath: filePath,
+			verbose:  true,
+		})
+		if err != nil {
+			t.Fatalf("runImportMarkdown() 返回错误: %v", err)
+		}
+	})
+
+	if gotTitle != "文档元标题" {
+		t.Fatalf("createDocument title = %q, 期望 %q", gotTitle, "文档元标题")
+	}
+	if gotDocumentID != "doc_new_123" || gotParentBlockID != "doc_new_123" {
+		t.Fatalf("导入目标文档错误: documentID=%q parentBlockID=%q", gotDocumentID, gotParentBlockID)
+	}
+	wantBody := "\n# 正文一级标题\n\n正文内容\n"
+	if gotMarkdownText != wantBody {
+		t.Fatalf("markdownText = %q, 期望 %q", gotMarkdownText, wantBody)
+	}
+}
+
+func TestRunImportMarkdown_ExistingDocumentIgnoresFrontMatterTitle(t *testing.T) {
+	initImportCommandTestConfig(t)
+
+	filePath := filepath.Join(t.TempDir(), "existing.md")
+	content := "---\n" +
+		"title: 不应写回已有文档标题\n" +
+		"document_id: old_doc_id\n" +
+		"---\n\n" +
+		"# 正文一级标题\n正文内容\n"
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatalf("写入测试 Markdown 失败: %v", err)
+	}
+
+	oldCreateDocumentFn := createDocumentFn
+	oldImportFn := importMarkdownIntoParentFn
+	defer func() {
+		createDocumentFn = oldCreateDocumentFn
+		importMarkdownIntoParentFn = oldImportFn
+	}()
+
+	createDocumentFn = func(title string, folderToken string) (*larkdocx.Document, error) {
+		t.Fatalf("已有文档追加模式不应创建新文档")
+		return nil, nil
+	}
+
+	var gotMarkdownText string
+	importMarkdownIntoParentFn = func(documentID string, parentBlockID string, markdownText string, basePath string, uploadImages bool, verbose bool, diagramWorkers int, tableWorkers int, diagramRetries int) (*importStats, error) {
+		gotMarkdownText = markdownText
+		return &importStats{}, nil
+	}
+
+	_ = captureStdout(t, func() {
+		err := runImportMarkdown(importMarkdownRequest{
+			filePath:   filePath,
+			documentID: "doc_existing_123",
+		})
+		if err != nil {
+			t.Fatalf("runImportMarkdown() 返回错误: %v", err)
+		}
+	})
+
+	wantBody := "\n# 正文一级标题\n正文内容\n"
+	if gotMarkdownText != wantBody {
+		t.Fatalf("markdownText = %q, 期望 %q", gotMarkdownText, wantBody)
 	}
 }

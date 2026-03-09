@@ -114,6 +114,7 @@ func runReplaceContent(req replaceContentRequest) error {
 	} else {
 		contentData = req.source
 	}
+	contentData = parseMarkdownDocument(contentData).Body
 
 	if req.parentBlockID == "" {
 		req.parentBlockID = req.documentID
@@ -254,7 +255,7 @@ func init() {
 	replaceContentCmd.Flags().StringP("block-id", "b", "", "目标父块 ID (默认: 文档根节点)")
 	replaceContentCmd.Flags().Bool("allow-empty", false, "允许空内容，此时会清空目标父块")
 	replaceContentCmd.Flags().BoolP("force", "f", false, "跳过确认直接执行")
-	replaceContentCmd.Flags().Bool("upload-images", true, "上传 Markdown 中的本地图片")
+	replaceContentCmd.Flags().Bool("upload-images", true, "上传 Markdown 中的本地图片（顶部 front matter 会自动剥离，不会修改文档标题）")
 	replaceContentCmd.Flags().Int("diagram-workers", 5, "图表并发数")
 	replaceContentCmd.Flags().Int("table-workers", 3, "表格并发数")
 	replaceContentCmd.Flags().Int("diagram-retries", 10, "图表重试次数")

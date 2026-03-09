@@ -275,6 +275,8 @@ type importMarkdownRequest struct {
 }
 
 var importMarkdownIntoParentFn = importMarkdownIntoParent
+var createDocumentFn = client.CreateDocument
+var applyAutoPermissionIfEnabledFn = applyAutoPermissionIfEnabled
 
 var importMarkdownCmd = &cobra.Command{
 	Use:   "import <file.md>",
@@ -402,25 +404,15 @@ func runImportMarkdown(req importMarkdownRequest) error {
 	}
 
 	basePath := filepath.Dir(req.filePath)
-	markdownText := string(content)
+	parsed := parseMarkdownDocument(string(content))
+	markdownText := parsed.Body
 	documentID := req.documentID
 
 	// If no document ID, create new document
 	if documentID == "" {
-		title := req.title
-		if title == "" {
-			// Use filename as title
-			title = filepath.Base(req.filePath)
-			ext := filepath.Ext(title)
-			if len(ext) < len(title) {
-				title = title[:len(title)-len(ext)]
-			}
-			if title == "" {
-				title = "无标题文档"
-			}
-		}
+		title := resolveImportDocumentTitle(req.title, parsed.Metadata, req.filePath)
 
-		doc, err := client.CreateDocument(title, req.folder)
+		doc, err := createDocumentFn(title, req.folder)
 		if err != nil {
 			return fmt.Errorf("创建文档失败: %w", err)
 		}
@@ -430,7 +422,7 @@ func runImportMarkdown(req importMarkdownRequest) error {
 		documentID = *doc.DocumentId
 		fmt.Printf("已创建文档: %s\n", documentID)
 		fmt.Printf("链接: https://feishu.cn/docx/%s\n\n", documentID)
-		if err := applyAutoPermissionIfEnabled(documentID, "docx"); err != nil {
+		if err := applyAutoPermissionIfEnabledFn(documentID, "docx"); err != nil {
 			return fmt.Errorf("创建文档后自动授权失败: %w", err)
 		}
 	} else {
@@ -1139,7 +1131,7 @@ func createDiagramCodeBlock(syntax, content string) *larkdocx.Block {
 
 func init() {
 	docCmd.AddCommand(importMarkdownCmd)
-	importMarkdownCmd.Flags().StringP("title", "t", "", "文档标题 (用于新建文档)")
+	importMarkdownCmd.Flags().StringP("title", "t", "", "文档标题（仅用于新建文档，优先级高于 front matter.title）")
 	importMarkdownCmd.Flags().StringP("document-id", "d", "", "已有文档ID (默认追加导入，可配合 --mode replace 覆盖)")
 	importMarkdownCmd.Flags().String("mode", "", "已有文档导入模式 (append/replace，默认 append)")
 	importMarkdownCmd.Flags().Bool("replace", false, "等价于 --mode replace，用 Markdown 覆盖已有文档内容")

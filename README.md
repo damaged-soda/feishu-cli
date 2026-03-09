@@ -52,11 +52,12 @@ feishu-cli doc import report.md --document-id <document_id> --mode replace
 feishu-cli doc replace <document_id> report.md
 
 # 导出：飞书文档 → Markdown
-feishu-cli doc export <document_id> -o doc.md --download-images
+feishu-cli doc export <document_id> -o doc.md --download-images --front-matter
 ```
 
 如果你要用一份新的 Markdown 完整覆盖已有文档内容，可以使用 `feishu-cli doc import --document-id ... --mode replace`，或等价的 `feishu-cli doc replace`。
 `feishu-cli doc import --document-id ...` 在未指定模式时仍然是向已有文档追加导入内容，不会自动清空旧内容。
+飞书文档标题与正文中的第一个 `#` 标题完全脱钩：文档标题属于元数据，推荐通过 `--front-matter` 导出保留；导入新文档时标题优先取 `--title`，其次取 `front matter.title`，最后回落到文件名。向已有文档追加或覆盖内容时，只更新正文，不修改飞书文档标题。
 
 **支持的语法**：标题（6 级）、段落、列表（无限深度嵌套）、任务列表、代码块、引用、Callout（6 种类型）、表格（自动拆分）、分割线、图片、链接、公式、粗体 / 斜体 / 删除线 / 下划线 / 行内代码 / 高亮
 

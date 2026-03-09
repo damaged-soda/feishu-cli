@@ -31,6 +31,7 @@ var exportWikiCmd = &cobra.Command{
   url               知识库文档 URL
   --output, -o      输出文件路径
   --download-images 下载文档中的图片
+  --front-matter    添加 YAML front matter，保留文档标题和 Token 元数据
 
 示例:
   # 导出到默认路径
@@ -43,7 +44,10 @@ var exportWikiCmd = &cobra.Command{
   feishu-cli wiki export https://xxx.feishu.cn/wiki/Ad8Iw0oz3iSp4kkIi7QctVhin3e
 
   # 导出并下载图片
-  feishu-cli wiki export Ad8Iw0oz3iSp4kkIi7QctVhin3e --download-images`,
+  feishu-cli wiki export Ad8Iw0oz3iSp4kkIi7QctVhin3e --download-images
+
+  # 导出并保留元数据
+  feishu-cli wiki export Ad8Iw0oz3iSp4kkIi7QctVhin3e --front-matter`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.Validate(); err != nil {
@@ -95,6 +99,18 @@ var exportWikiCmd = &cobra.Command{
 			return fmt.Errorf("转换为 Markdown 失败: %w", err)
 		}
 
+		frontMatter, _ := cmd.Flags().GetBool("front-matter")
+		if frontMatter {
+			markdown, err = prependMarkdownFrontMatter(markdown, markdownMetadata{
+				Title:      node.Title,
+				DocumentID: node.ObjToken,
+				NodeToken:  nodeToken,
+			})
+			if err != nil {
+				return err
+			}
+		}
+
 		// 5. 保存文件
 		outputPath, _ := cmd.Flags().GetString("output")
 		if outputPath == "" {
@@ -134,4 +150,5 @@ func init() {
 	exportWikiCmd.Flags().StringP("output", "o", "", "输出文件路径")
 	exportWikiCmd.Flags().Bool("download-images", false, "下载图片到本地目录")
 	exportWikiCmd.Flags().String("assets-dir", "./assets", "下载资源的保存目录")
+	exportWikiCmd.Flags().Bool("front-matter", false, "添加 YAML front matter（用于保留知识库文档标题和 Token 元数据）")
 }
