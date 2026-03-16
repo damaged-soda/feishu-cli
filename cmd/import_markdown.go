@@ -272,26 +272,27 @@ type importMarkdownRequest struct {
 	diagramRetries  int
 	mode            string
 	replaceExisting bool
+	appendExisting  bool
 }
 
 var importMarkdownIntoParentFn = importMarkdownIntoParent
 
 var importMarkdownCmd = &cobra.Command{
 	Use:   "import <file.md>",
-	Short: "从 Markdown 导入创建文档或向已有文档追加内容",
-	Long: `从 Markdown 文件导入内容，创建新的飞书文档或向已有文档追加导入内容。
+	Short: "从 Markdown 导入创建文档或导入到已有文档",
+	Long: `从 Markdown 文件导入内容，创建新的飞书文档或导入到已有文档。
 
 特性:
   - 三阶段流水线: 顺序创建 → 并发处理 → 降级容错
   - Mermaid/PlantUML 图表自动转换为飞书画板 (重试+失败降级为代码块)
   - 表格并发填充，大表格自动拆分
-  - 对已有文档默认追加导入，可通过 --mode replace 或 --replace 覆盖旧内容
+  - 对已有文档默认覆盖导入，可通过 --append 或 --mode append 显式追加
   - 详细进度和耗时统计
 
 示例:
   feishu-cli doc import doc.md --title "我的文档"
   feishu-cli doc import doc.md --document-id ABC123def456
-  feishu-cli doc import doc.md --document-id ABC123def456 --mode replace
+  feishu-cli doc import doc.md --document-id ABC123def456 --append
   feishu-cli doc import doc.md --title "我的文档" --verbose
   feishu-cli doc import doc.md --title "测试" --diagram-workers 5 --table-workers 8`,
 	Args: cobra.ExactArgs(1),
@@ -308,6 +309,7 @@ var importMarkdownCmd = &cobra.Command{
 		req.diagramRetries, _ = cmd.Flags().GetInt("diagram-retries")
 		req.mode, _ = cmd.Flags().GetString("mode")
 		req.replaceExisting, _ = cmd.Flags().GetBool("replace")
+		req.appendExisting, _ = cmd.Flags().GetBool("append")
 
 		// 向后兼容: 如果用户使用了旧的 --mermaid-workers/--mermaid-retries，覆盖新值
 		if cmd.Flags().Changed("mermaid-workers") {
@@ -321,15 +323,22 @@ var importMarkdownCmd = &cobra.Command{
 	},
 }
 
-func normalizeImportMode(documentID, mode string, replaceExisting bool) (string, error) {
+func normalizeImportMode(documentID, mode string, replaceExisting bool, appendExisting bool) (string, error) {
 	if documentID == "" {
 		if replaceExisting {
 			return "", fmt.Errorf("创建新文档时不能指定 --replace；如需覆盖已有文档，请同时传入 --document-id")
+		}
+		if appendExisting {
+			return "", fmt.Errorf("创建新文档时不能指定 --append；如需追加到已有文档，请同时传入 --document-id")
 		}
 		if mode != "" {
 			return "", fmt.Errorf("创建新文档时不能指定 --mode；如需覆盖或追加已有文档，请同时传入 --document-id")
 		}
 		return "", nil
+	}
+
+	if replaceExisting && appendExisting {
+		return "", fmt.Errorf("--replace 与 --append 冲突，请二选一")
 	}
 
 	if replaceExisting {
@@ -339,8 +348,15 @@ func normalizeImportMode(documentID, mode string, replaceExisting bool) (string,
 		return importModeReplace, nil
 	}
 
-	if mode == "" {
+	if appendExisting {
+		if mode != "" && mode != importModeAppend {
+			return "", fmt.Errorf("--append 与 --mode=%s 冲突，请统一使用追加模式", mode)
+		}
 		return importModeAppend, nil
+	}
+
+	if mode == "" {
+		return importModeReplace, nil
 	}
 
 	switch mode {
@@ -355,7 +371,7 @@ func printImportAppendNotice(documentID, output string) {
 	if documentID == "" || output == "json" {
 		return
 	}
-	fmt.Printf("提示: 当前会向已有文档 %s 追加导入内容；如需完整覆盖旧内容，请改用 --mode replace 或 feishu-cli doc replace。\n\n", documentID)
+	fmt.Printf("提示: 当前会以追加模式向已有文档 %s 导入内容；如需完整覆盖旧内容，请使用默认 replace 模式、显式指定 --replace，或改用 feishu-cli doc replace。\n\n", documentID)
 }
 
 func runImportMarkdown(req importMarkdownRequest) error {
@@ -363,7 +379,7 @@ func runImportMarkdown(req importMarkdownRequest) error {
 		return err
 	}
 
-	mode, err := normalizeImportMode(req.documentID, req.mode, req.replaceExisting)
+	mode, err := normalizeImportMode(req.documentID, req.mode, req.replaceExisting, req.appendExisting)
 	if err != nil {
 		return err
 	}
@@ -1140,9 +1156,10 @@ func createDiagramCodeBlock(syntax, content string) *larkdocx.Block {
 func init() {
 	docCmd.AddCommand(importMarkdownCmd)
 	importMarkdownCmd.Flags().StringP("title", "t", "", "文档标题 (用于新建文档)")
-	importMarkdownCmd.Flags().StringP("document-id", "d", "", "已有文档ID (默认追加导入，可配合 --mode replace 覆盖)")
-	importMarkdownCmd.Flags().String("mode", "", "已有文档导入模式 (append/replace，默认 append)")
-	importMarkdownCmd.Flags().Bool("replace", false, "等价于 --mode replace，用 Markdown 覆盖已有文档内容")
+	importMarkdownCmd.Flags().StringP("document-id", "d", "", "已有文档ID (默认 replace 覆盖，可配合 --append 或 --mode append 追加)")
+	importMarkdownCmd.Flags().String("mode", "", "已有文档导入模式 (replace/append，默认 replace)")
+	importMarkdownCmd.Flags().Bool("replace", false, "等价于 --mode replace，显式覆盖已有文档内容 (默认行为)")
+	importMarkdownCmd.Flags().Bool("append", false, "等价于 --mode append，向已有文档末尾追加导入内容")
 	importMarkdownCmd.Flags().Bool("upload-images", true, "上传本地图片")
 	importMarkdownCmd.Flags().StringP("folder", "f", "", "新文档的文件夹 Token")
 	importMarkdownCmd.Flags().StringP("output", "o", "", "输出格式 (json)")

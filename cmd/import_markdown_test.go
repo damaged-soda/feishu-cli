@@ -55,6 +55,7 @@ func TestNormalizeImportMode(t *testing.T) {
 		documentID      string
 		mode            string
 		replaceExisting bool
+		appendExisting  bool
 		want            string
 		wantErr         bool
 	}{
@@ -63,9 +64,9 @@ func TestNormalizeImportMode(t *testing.T) {
 			want: "",
 		},
 		{
-			name:       "已有文档默认追加",
+			name:       "已有文档默认覆盖",
 			documentID: "doc123",
-			want:       importModeAppend,
+			want:       importModeReplace,
 		},
 		{
 			name:       "已有文档显式覆盖",
@@ -74,10 +75,22 @@ func TestNormalizeImportMode(t *testing.T) {
 			want:       importModeReplace,
 		},
 		{
+			name:       "已有文档显式追加",
+			documentID: "doc123",
+			mode:       importModeAppend,
+			want:       importModeAppend,
+		},
+		{
 			name:            "replace 别名切到覆盖",
 			documentID:      "doc123",
 			replaceExisting: true,
 			want:            importModeReplace,
+		},
+		{
+			name:           "append 别名切到追加",
+			documentID:     "doc123",
+			appendExisting: true,
+			want:           importModeAppend,
 		},
 		{
 			name:    "新建文档不能指定模式",
@@ -90,10 +103,29 @@ func TestNormalizeImportMode(t *testing.T) {
 			wantErr:         true,
 		},
 		{
-			name:            "append 与 replace 冲突",
+			name:           "新建文档不能指定 append",
+			appendExisting: true,
+			wantErr:        true,
+		},
+		{
+			name:            "append 模式与 replace 别名冲突",
 			documentID:      "doc123",
 			mode:            importModeAppend,
 			replaceExisting: true,
+			wantErr:         true,
+		},
+		{
+			name:           "replace 模式与 append 别名冲突",
+			documentID:     "doc123",
+			mode:           importModeReplace,
+			appendExisting: true,
+			wantErr:        true,
+		},
+		{
+			name:            "append 与 replace 别名冲突",
+			documentID:      "doc123",
+			replaceExisting: true,
+			appendExisting:  true,
 			wantErr:         true,
 		},
 		{
@@ -106,7 +138,7 @@ func TestNormalizeImportMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := normalizeImportMode(tt.documentID, tt.mode, tt.replaceExisting)
+			got, err := normalizeImportMode(tt.documentID, tt.mode, tt.replaceExisting, tt.appendExisting)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("期望返回错误")
@@ -123,7 +155,7 @@ func TestNormalizeImportMode(t *testing.T) {
 	}
 }
 
-func TestRunImportMarkdown_ReplaceModeDispatchesToReplace(t *testing.T) {
+func TestRunImportMarkdown_DefaultDocumentIDModeDispatchesToReplace(t *testing.T) {
 	initImportCommandTestConfig(t)
 
 	filePath := filepath.Join(t.TempDir(), "replace.md")
@@ -151,15 +183,14 @@ func TestRunImportMarkdown_ReplaceModeDispatchesToReplace(t *testing.T) {
 	}
 
 	err := runImportMarkdown(importMarkdownRequest{
-		filePath:        filePath,
-		documentID:      "doc_replace_123",
-		uploadImages:    true,
-		verbose:         true,
-		output:          "json",
-		diagramWorkers:  7,
-		tableWorkers:    4,
-		diagramRetries:  11,
-		replaceExisting: true,
+		filePath:       filePath,
+		documentID:     "doc_replace_123",
+		uploadImages:   true,
+		verbose:        true,
+		output:         "json",
+		diagramWorkers: 7,
+		tableWorkers:   4,
+		diagramRetries: 11,
 	})
 	if err != nil {
 		t.Fatalf("runImportMarkdown() 返回错误: %v", err)
@@ -193,7 +224,7 @@ func TestRunImportMarkdown_ReplaceModeDispatchesToReplace(t *testing.T) {
 	}
 }
 
-func TestRunImportMarkdown_DefaultDocumentIDModeAppends(t *testing.T) {
+func TestRunImportMarkdown_AppendModeAppends(t *testing.T) {
 	initImportCommandTestConfig(t)
 
 	filePath := filepath.Join(t.TempDir(), "append.md")
@@ -210,7 +241,7 @@ func TestRunImportMarkdown_DefaultDocumentIDModeAppends(t *testing.T) {
 	}()
 
 	runReplaceContentFn = func(req replaceContentRequest) error {
-		t.Fatalf("默认模式不应走替换逻辑")
+		t.Fatalf("追加模式不应走替换逻辑")
 		return nil
 	}
 
@@ -249,6 +280,7 @@ func TestRunImportMarkdown_DefaultDocumentIDModeAppends(t *testing.T) {
 			diagramWorkers: 5,
 			tableWorkers:   3,
 			diagramRetries: 9,
+			appendExisting: true,
 		})
 		if err != nil {
 			t.Fatalf("runImportMarkdown() 返回错误: %v", err)
